@@ -1,0 +1,33 @@
+---
+- hosts: all
+  gather_facts: no
+  become: true
+  become_method: sudo
+  ignore_errors: true
+  ignore_unreachable: true
+  tasks:
+  - name: get os version
+    shell: cat /etc/os-release | head -n 2 | tail -n 1
+    register: os_release
+    
+  - name: get kernel version
+    shell: uname -r
+    register: kernel
+    
+  
+  - name: get uptime of the server
+    shell:   uptime | cut -d ',' -f1
+    register: uptime
+    
+  - name: create a csv file on data collection
+    shell: echo "HOSTNAME,UPTIME,KERNEL VERSION,OS VERSION" > /tmp/server_details_{{ tower_job_id }}.csv
+    delegate_to: '{{ data_collection }}'
+    run_once: true
+    
+  - name: append data in data collection
+    lineinfile:
+      path: /tmp/server_details_{{ tower_job_id }}.csv
+      line: "{{ inventory_hostname }},{{ uptime.stdout }},{{ kernel.stdout }},{{os_release.stdout }}"
+    #shell: echo "{{ inventory_hostname }},{{ uptime.stdout }},{{ kernel.stdout }},{{os_release.stdout }}" >> /tmp/server_details_{{ tower_job_id }}.csv
+    delegate_to: '{{ data_collection }}'
+  

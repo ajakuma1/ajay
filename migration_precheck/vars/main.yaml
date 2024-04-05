@@ -1,0 +1,4 @@
+---
+collection: '{{ data_collection }}'
+download_status: "file downloading failed"
+result_dir_path: "{{ hostvars['localhost'].base_dir }}"

@@ -1,0 +1,8 @@
+---
+- hosts: all
+  gather_facts: no
+  become: true
+  become_method: sudo
+  tasks:
+  - name: clear failed count for service account
+    shell: pam_tally2 -u busrvac135 -r

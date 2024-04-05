@@ -1,0 +1,173 @@
+---
+
+- set_fact:
+    date: "{{lookup('pipe','date +%Y%m%d')}}"
+
+#- name: get todays date
+#  shell: date +%d-%m-%Y
+#  register: date
+#  run_once: True
+  
+- name: get os version
+  shell: cat /etc/redhat-release
+  register: os_version
+  
+- name: check for redhat server
+  shell: cat /etc/redhat-release | grep -i red
+  register: red_ver
+  
+  
+- name: check for centos server
+  shell: cat /etc/redhat-release | grep -i centos
+  register: cent_ver
+  
+- name: dry run yum command
+  shell: yum update -y --setopt tsflags=test
+  register: yum_dry_test
+  async: 1500
+  
+- name: get all file except redhat.repo
+  shell: find  /etc/yum.repos.d/ -type f | grep -iv redhat
+  register: red_move
+  when: red_ver.rc == 0
+  
+- name: get all file except centos.repo
+  shell: find  /etc/yum.repos.d/ -type f | grep -iv centos
+  register: centos_move
+  when: cent_ver.rc == 0
+  
+- name: create a director for moving file
+  file:
+    path: /etc/yum.repos.d/old_bkp_{{ date }}
+    state: directory
+    
+- name: move file for redhat
+  shell: mv {{ item }} /etc/yum.repos.d/old_bkp_{{ date }}/
+  with_items: '{{ red_move.stdout_lines }}'
+  when: Red in os_version.stdout
+  
+- name: move file for centos
+  shell: mv {{ item }} /etc/yum.repos.d/old_bkp_{{ date }}/
+  with_items: '{{ centos_move.stdout_lines }}'
+  when: cent_ver.rc == 0
+  
+- name: create directory on tower for data collection
+  file:
+    path: /tmp/migration_precheck_{{ date }}_{{ tower_job_id }}
+    state: directory
+  delegate_to: localhost
+  become: False
+  run_once: True
+  
+  
+- name: clean previous repo
+  shell: yum clean all
+  async: 1500
+  
+  
+- name: get server hostname 
+  shell: hostname
+  register: host
+  
+- name: get kernel version
+  shell: uname -r
+  register: kernel
+  
+- name: copy precheck file
+  copy:
+    src: precheck.sh
+    dest: /tmp/
+    mode: 0775
+
+
+- name: execute precheck script
+  shell: sh -x /tmp/precheck.sh
+  async: 1500
+
+- name: check if any mount point is 75 percent above
+  shell: df -P | awk '0+$5 >= 75 {print}'
+  register: mount
+  
+- name: check vormetric service exists
+  shell: systemctl status vmd |sed -n 3p | awk '{ print $2,$3 }'
+  register: vmd
+
+- name: check yum repolist
+  shell: yum repolist enabled
+  register: list
+  ignore_errors: true
+  async: 1500
+  
+- name: download packages
+  shell: yum update --downloadonly --skip-broken -y
+  register: repolist
+  ignore_errors: True
+  async: 1500
+  
+- set_fact:
+    repo_status: "repo enabled"
+  when: list.rc == 0
+  
+- set_fact:
+    download_status: "files downloaded"
+  when: repolist.rc == 0
+  
+  
+#- name: make a directory in data collection server
+#  file:
+#   path: /tmp/precheck_data_collection_{{ date }}_{{ tower_job_id }}
+#   state: directory
+#  run_once: true
+#  delegate_to: '{{ data_collection }}'
+
+
+- name: "Get timestamp from the system"
+  command: "date +%Y%m%d%H%M%S"
+  register: tstamp
+  changed_when: tstamp.rc != 0
+
+
+
+- name: Set filename varaibles
+  set_fact:
+    ts_pre: "{{ tstamp.stdout_lines[-1][0:12] }}"
+    ts_post: "{{ tstamp.stdout_lines[-1][0:14] }}"
+  
+
+
+- name: append file in log file
+  lineinfile:
+    path: /tmp/precheck_data_collection_{{ date }}_{{ tower_job_id }}/pre-reboot-{{ host.stdout }}-{{ date }}.txt
+    line: |
+      ##################### DATA COLLECTION START FOR  {{ inventory_hostname }} #########
+      ## BELOW ARE THE DETAILS ##########################################################
+      ######################  yum update -y --setopt tsflags=test.  ####################
+      {{ yum_dry_test.stdout }}
+      ########### yum update --downloadonly --skip-broken -y ###########################
+      {{ repolist.stdout }}
+      {{ download_status }}
+      ####################### mount point above 75 precent ###############################
+      {{ mount.stdout }}
+      ####################### vormetric status check ###############################
+      {{ vmd.stdout }}
+      ####################### yum repolist enabled status ##########################
+      {{ list.stdout }}
+      ####################### kernel version #################################
+      {{ kernel.stdout }}
+      ###################### OS VERSION ######################################
+      {{ os_version.stdout }}
+      ##################### DATA COLLECTION END FOR {{ inventory_hostname }} ##########
+    create: true
+    
+    
+
+  
+
+  
+- name: fetch data to AT
+  fetch:
+    src: "/tmp/precheck_data_collection_{{ date }}_{{ tower_job_id }}/pre-reboot-{{ host.stdout }}-{{ date }}.txt"
+    dest: "{{ result_dir_path }}/{{ inventory_hostname }}-{{ bac_id }}-{{ ts_post }}-{{ ts_pre }}-{{ tower_job_id }}_ANSIBLE-.txt"
+    flat: true
+  vars:
+    result_dir_path: "{{ hostvars['localhost'].base_dir }}"

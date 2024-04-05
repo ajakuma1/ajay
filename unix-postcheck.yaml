@@ -1,0 +1,81 @@
+---
+- hosts: all
+  gather_facts: no
+  become: true
+  become_method: sudo
+  tasks:
+  
+
+  - name: get todays date
+    shell: date +%d-%m-%Y
+    register: date
+    run_once: True
+  
+  - name: create directory on tower for data collection
+    file:
+      path: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}
+      state: directory
+    delegate_to: localhost
+    become: false
+    run_once: True
+    
+  - name: create file for data collection
+    file:
+      path: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}.txt
+      state: touch
+      mode: 0755
+      
+  - name: get mount point details
+    shell: df -hT
+    register: mount
+    
+  - name: get uptime
+    shell: uptime
+    register: up
+    
+  - name: get kernel version
+    shell: uname -r
+    register: kernel
+    
+  - name: get disk output
+    shell: lsblk -m
+    register: disk
+    
+  - name: append data in txt file
+    lineinfile:
+      path: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}.txt
+      line: '{{ item }}'
+    with_items:
+      - '{{ mount.stdout }}'
+      - '{{ up.stdout }}'
+      - '{{ kernel.stdout }}'
+      - '{{ disk.stdout }}'
+   
+  - name: fetch file from remote host to tower
+    fetch:
+      src: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}.txt
+      dest: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}
+    
+  - name: zip file before upload
+    archive:
+      path: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}
+      dest: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}.zip
+      format: zip
+    become: False
+    delegate_to: localhost
+    run_once: True
+    
+  - name: copy file to data collection host
+    copy:
+      src: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}.zip
+      dest: /tmp/
+    delegate_to: '{{ data_collection }}'
+    run_once: True
+  
+  - name: delete after data collection
+    file:
+      path: /tmp/migration_postcheck_{{ date.stdout }}_{{ tower_job_id }}
+      state: absent
+    become: False
+    delegate_to: localhost
+    run_once: True

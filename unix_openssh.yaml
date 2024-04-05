@@ -1,0 +1,76 @@
+---
+- name: Prepare environment for upload to SFS in patch scan playbook
+  hosts: all
+  connection: local
+  gather_facts: false
+  run_once: true
+  ignore_unreachable: true
+  tasks:
+    - include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "prepare"
+        output_dir: "/tmp/testing_sfs"
+
+    - name: Stop execution if SFS failed
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        myrole_run_execution: true
+      when: returncode == "0"
+      
+      
+- hosts: all
+  become: True
+  become_method: sudo
+  gather_facts: false
+  ignore_errors: true
+  vars:
+    rpm_version: "no openssh"
+    exec_date: "{{lookup('pipe','date +%Y%m%d')}}"
+  tasks:
+    
+  - name: get openssh version from server
+    shell: rpm -qa | grep openssh | head -1
+    register: open
+  
+  - set_fact:
+      rpm_version: "{{ open.stdout }}"
+    when: open.rc == 0
+    
+    
+  - name: get os version
+    shell: cat /etc/redhat-release
+    register: os_version
+    
+  - name: append data in a file
+    lineinfile:
+      path: /tmp/openssh-version-{{ exec_date }}.csv
+      line: "{{ inventory_hostname }},{{ rpm_version }},{{ os_version.stdout }}"
+      create: true
+  - name: fetch data to AT
+    fetch:
+      src: "/tmp/openssh-version-{{ exec_date }}.csv"
+      dest: "{{ result_dir_path }}/{{ inventory_hostname }}_{{ tower_job_id }}_{{ exec_date }}.csv"
+      flat: true
+    vars:
+      result_dir_path: "{{ hostvars['localhost'].base_dir }}"  
+  
+  
+- name: Upload data to SFS and report SFS return value as my result.
+  hosts: all
+  connection: local
+  gather_facts: false
+  run_once: true
+  ignore_unreachable: true
+  tasks:
+    - include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "upload"
+        output_file_name: "unix_openssh_version_{{ tower_job_id }}_{{ hostvars.localhost.timestamp }}.zip"
+        merged_file_name: "unix_openssh_version_consolidated_{{ tower_job_id }}_{{ hostvars.localhost.timestamp }}.csv"
+        merge_results: true       
+      when:
+        - hostvars.localhost.myrole_run_execution is defined
+        - hostvars.localhost.myrole_run_execution        
